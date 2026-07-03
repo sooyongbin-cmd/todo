@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #f7f5f0;
+  background-image: radial-gradient(circle at 1px 1px, rgba(27, 31, 29, 0.06) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid #2f5233;
+  outline-offset: 2px;
+}
+
+/* perforated edge between the card list and the receipt-style meta strip */
+.perforated {
+  position: relative;
+}
+.perforated::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background-image: repeating-linear-gradient(
+    90deg,
+    #dad5c7,
+    #dad5c7 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+
+.stamp-mark {
+  transform: rotate(-8deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .task-enter {
+    animation: task-in 220ms ease-out;
+  }
+  .stamp-pop {
+    animation: stamp-in 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+}
+
+@keyframes task-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes stamp-in {
+  from {
+    opacity: 0;
+    transform: rotate(-8deg) scale(1.6);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(-8deg) scale(1);
+  }
+}
+
+::selection {
+  background: #d4a017;
+  color: #1b1f1d;
+}
