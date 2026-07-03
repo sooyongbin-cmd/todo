@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { AuthProvider } from "@/lib/AuthContext";
 import "./globals.css";
 
 const plexMono = IBM_Plex_Mono({
@@ -29,7 +30,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ko" className={`${plexMono.variable} ${plexSans.variable}`}>
-      <body className="font-sans text-ink antialiased">{children}</body>
+      <body className="font-sans text-ink antialiased">
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }

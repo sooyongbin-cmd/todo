@@ -1,6 +1,20 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  collection,
+  addDoc,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+  writeBatch,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { useAuth } from "@/lib/AuthContext";
 
 type Priority = "low" | "normal" | "high";
 
@@ -13,8 +27,6 @@ type Todo = {
 };
 
 type Filter = "all" | "active" | "done";
-
-const STORAGE_KEY = "ledger-todo:v1";
 
 const PRIORITY_LABEL: Record<Priority, string> = {
   low: "낮음",
@@ -39,39 +51,43 @@ function todayStamp() {
   };
 }
 
-function uid() {
-  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-}
-
 export default function TodoApp() {
+  const { user, logout } = useAuth();
   const [todos, setTodos] = useState<Todo[]>([]);
-  const [hydrated, setHydrated] = useState(false);
+  const [loadingTodos, setLoadingTodos] = useState(true);
   const [input, setInput] = useState("");
   const [priority, setPriority] = useState<Priority>("normal");
   const [filter, setFilter] = useState<Filter>("all");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // load from localStorage once on mount
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) setTodos(JSON.parse(raw));
-    } catch {
-      // ignore corrupted storage
-    } finally {
-      setHydrated(true);
-    }
-  }, []);
-
-  // persist on every change (after initial hydration)
-  useEffect(() => {
-    if (!hydrated) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
-  }, [todos, hydrated]);
 
   const stamp = useMemo(todayStamp, []);
+
+  // subscribe to this user's todos in real time: users/{uid}/todos
+  useEffect(() => {
+    if (!user) return;
+    const todosRef = collection(db, "users", user.uid, "todos");
+    const q = query(todosRef, orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const items: Todo[] = snapshot.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            text: data.text ?? "",
+            done: Boolean(data.done),
+            priority: (data.priority as Priority) ?? "normal",
+            createdAt: data.createdAt?.toMillis?.() ?? Date.now(),
+          };
+        });
+        setTodos(items);
+        setLoadingTodos(false);
+      },
+      () => setLoadingTodos(false)
+    );
+    return unsubscribe;
+  }, [user]);
 
   const filtered = useMemo(() => {
     switch (filter) {
@@ -87,31 +103,39 @@ export default function TodoApp() {
   const remaining = todos.filter((t) => !t.done).length;
   const doneCount = todos.length - remaining;
 
-  function addTodo(e: FormEvent) {
+  async function addTodo(e: FormEvent) {
     e.preventDefault();
+    if (!user) return;
     const text = input.trim();
     if (!text) return;
-    setTodos((prev) => [
-      { id: uid(), text, done: false, priority, createdAt: Date.now() },
-      ...prev,
-    ]);
     setInput("");
+    const preservedPriority = priority;
     setPriority("normal");
-    inputRef.current?.focus();
+    await addDoc(collection(db, "users", user.uid, "todos"), {
+      text,
+      done: false,
+      priority: preservedPriority,
+      createdAt: serverTimestamp(),
+    });
   }
 
-  function toggleTodo(id: string) {
-    setTodos((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t))
-    );
+  async function toggleTodo(id: string, done: boolean) {
+    if (!user) return;
+    await updateDoc(doc(db, "users", user.uid, "todos", id), { done: !done });
   }
 
-  function deleteTodo(id: string) {
-    setTodos((prev) => prev.filter((t) => t.id !== id));
+  async function deleteTodo(id: string) {
+    if (!user) return;
+    await deleteDoc(doc(db, "users", user.uid, "todos", id));
   }
 
-  function clearDone() {
-    setTodos((prev) => prev.filter((t) => !t.done));
+  async function clearDone() {
+    if (!user) return;
+    const batch = writeBatch(db);
+    todos
+      .filter((t) => t.done)
+      .forEach((t) => batch.delete(doc(db, "users", user.uid, "todos", t.id)));
+    await batch.commit();
   }
 
   function startEdit(t: Todo) {
@@ -119,12 +143,15 @@ export default function TodoApp() {
     setEditingText(t.text);
   }
 
-  function commitEdit(id: string) {
+  async function commitEdit(id: string) {
+    if (!user) return;
     const text = editingText.trim();
-    setTodos((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, text: text || t.text } : t))
-    );
     setEditingId(null);
+    if (!text) {
+      setEditingText("");
+      return;
+    }
+    await updateDoc(doc(db, "users", user.uid, "todos", id), { text });
     setEditingText("");
   }
 
@@ -140,7 +167,7 @@ export default function TodoApp() {
             TASKS
           </h1>
           <p className="text-sm text-muted mt-1">
-            오늘 처리할 일을 색인 카드 위에 기록하세요.
+            {user?.displayName || user?.email} 님의 카드
           </p>
         </div>
 
@@ -161,7 +188,6 @@ export default function TodoApp() {
         className="bg-card border border-line rounded-md shadow-sm p-3 sm:p-4 mb-6 flex flex-col sm:flex-row gap-2"
       >
         <input
-          ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="할 일을 입력하세요…"
@@ -212,7 +238,13 @@ export default function TodoApp() {
 
       {/* list */}
       <ul className="flex flex-col gap-2">
-        {filtered.length === 0 && (
+        {loadingTodos && (
+          <li className="text-center text-muted text-sm py-14">
+            불러오는 중…
+          </li>
+        )}
+
+        {!loadingTodos && filtered.length === 0 && (
           <li className="text-center text-muted text-sm py-14 border border-dashed border-line rounded-md">
             {todos.length === 0
               ? "카드가 비어 있습니다. 첫 번째 할 일을 적어보세요."
@@ -226,7 +258,7 @@ export default function TodoApp() {
             className="task-enter relative bg-card border border-line rounded-md px-3 sm:px-4 py-3 flex items-center gap-3 overflow-hidden"
           >
             <button
-              onClick={() => toggleTodo(t.id)}
+              onClick={() => toggleTodo(t.id, t.done)}
               aria-pressed={t.done}
               aria-label={t.done ? "완료 취소" : "완료로 표시"}
               className={`shrink-0 w-5 h-5 rounded-sm border-2 flex items-center justify-center transition-colors ${
@@ -302,19 +334,25 @@ export default function TodoApp() {
         ))}
       </ul>
 
-      {doneCount > 0 && (
-        <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex items-center justify-between">
+        <button
+          onClick={() => logout()}
+          className="font-mono text-xs text-muted hover:text-stamp transition-colors underline underline-offset-2"
+        >
+          로그아웃
+        </button>
+        {doneCount > 0 && (
           <button
             onClick={clearDone}
             className="font-mono text-xs text-muted hover:text-stamp transition-colors underline underline-offset-2"
           >
             완료된 항목 지우기
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       <footer className="mt-10 text-center font-mono text-[10px] tracking-widest text-muted/70">
-        LOCAL STORAGE · 브라우저에만 저장됩니다
+        FIRESTORE · 사용자별로 안전하게 저장됩니다
       </footer>
     </div>
   );
